@@ -1,0 +1,10 @@
+It became harder to debug modern c++ code due the proliferation of
+anonymous lambdas.
+
+This "demo" injects a function preamble through the "identify" macro
+into any function, which upon a call prints its name, source file and
+line.
+
+TODO:
+ - deduce the proper type for our identifiable_function.
+ - suggest change into compiler.

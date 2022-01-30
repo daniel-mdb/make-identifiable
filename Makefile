@@ -1,4 +1,4 @@
-CXX_FLAGS += -O0
+CXX_FLAGS += -O0 -std=c++20
 
 a-cpp: a.cc
 	$(CXX) $(CXX_FLAGS) -E -o $@ $<;
