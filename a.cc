@@ -1,76 +1,115 @@
 #include <iostream>
 #include <functional>
+#include <source_location>
 
-#define identify(...) (MUST_IDENTIFY, __VA_ARGS__) { \
-  std::cout << "Function called " << __func__ << " (" << __FILE__ << ":" << __LINE__ << ")" << std::endl;
-
-#pragma mark from here on
 namespace {
-  struct MUST_IDENTIFY {
-    explicit MUST_IDENTIFY() { }
-  };
-
-  template<typename F, typename ... Args>
-  auto make_identifiable_function(F && f, Args && ... args) noexcept {
-    return std::bind_front(f, MUST_IDENTIFY(), std::forward<Args>(args)...);
-  }
-
-#if 0
-  template<class Res, class ... ArgTypes>
-  using identifiable_function = std::function<Res(MUST_IDENTIFY, ArgTypes...)>;
-#endif
-
-#if 0
-  template<typename Res, typename ... ArgTypes>
-  class identifiable_function : public std::function<Res(ArgTypes...)> {
-  private:
-    typedef std::function<Res(MUST_IDENTIFY, ArgTypes...)> BASE;
-  public:
-    Res operator () (ArgTypes ... args) const {
-      return BASE::operator()(MUST_IDENTIFY(), args...);
+class MustIdentify {
+public:
+  explicit MustIdentify() { }
+  MustIdentify (const MustIdentify& f) { const_cast<MustIdentify&>(f)._identified = true; }
+  ~MustIdentify() {
+    if (!_identified) {
+      std::cerr << "The function exited before calling into identify" << std::endl;
     }
-  };
-#endif
+  }
+  void operator () (const std::source_location& l = std::source_location::current()) {
+    _identified = true;
+    printf("%s (%zu:%zu) %s\n", l.file_name(), l.line(), l.column(), l.function_name());
+  }
+private:
+  bool _identified = false;
+};
 
+template <typename F, typename R, typename... A>
+constexpr bool _no_throw(R(A...)) noexcept {
+  return std::is_nothrow_invocable_v<F, A...>;
+}
+} // namespace
+
+template<typename F>
+constexpr bool no_throw(F f) noexcept {
+  return _no_throw<F>(f);
 }
 
-void a identify(int a = 0) // {
-  std::cout << "Hello World!" << std::endl;
+namespace {
+template <typename F, typename R, typename... A>
+constexpr std::function<R(A...)> _make_identifiable(F&& f, R(A...)) {
+  if (!no_throw(f)) {
+    throw std::runtime_error("F must be declared noexcept or its first parameter must be of type MustIdentify");
+  }
+  return f;
 }
 
-#if 0
-/*
- * the above macro would read nicer if the compiler could simply concatenate root
- * level scopes like in:
- * int b(void) { /* preamble */ } { return 0; }
- */
-#endif
+template <typename F, typename R, typename... A>
+constexpr std::function<R(A...)> _make_identifiable(F&& f, R(MustIdentify, A...)) {
+  return std::bind_front(std::forward<F>(f), MustIdentify());
+}
+} // namespace
 
-int main() {
+template<typename F>
+auto make_identifiable(F&& f) {
+  return _make_identifiable(std::forward<F>(f), f);
+}
+
+void a(int, char) {
+  std::cout << __PRETTY_FUNCTION__ << std::endl;
+} 
+
+void b(int, char) noexcept {
+  std::cout << __PRETTY_FUNCTION__ << std::endl;
+}
+
+void c(MustIdentify i, int, char) {
+  std::cout << __PRETTY_FUNCTION__ << std::endl;
+}
+
+void d(MustIdentify i, int, char) {
+  i();
+  std::cout << __PRETTY_FUNCTION__ << std::endl;
+}
+
+int main(void) {
+  std::function<void(int, char)> z;
   try {
-    std::function<void(int)> a = a;
-    a(1);
-  } catch (const std::bad_function_call &e) {
-    std::cerr << "error " << e.what() << std::endl;
+    /*
+     * Function w/o noexcept without identify throws right away.
+     */
+    z = make_identifiable(a);
+    z(1, 'a');
+  } catch (const std::exception& e) {
+    std::cerr << "EXCEPTION: " << e.what() << std::endl;
   }
 
   try {
-    // it would have been better to have a specialized type to enforce this.
-    // Deserves more investigation!
-    const auto b = make_identifiable_function(a);
-    b(1);
-  } catch (const std::bad_function_call &e) {
-    std::cerr << "error " << e.what() << std::endl;
+    /*
+     * Function with noexcept passes.
+     */
+    z = make_identifiable(b);
+    z(1, 'a');
+  } catch (const std::exception& e) {
+    std::cerr << "exception " << e.what() << std::endl;
   }
 
-  {
-    const auto c = make_identifiable_function([] identify(int a = 1) // {
-      std::cout << "Good bye" << std::endl;
-    });
-
-    c();
+  try {
+    /*
+     * Function with MustIdentify passes, error is printed in case it does not call into the object.
+     */
+    z = make_identifiable(c);
+    z(1, 'a');
+  } catch (const std::exception& e) {
+    std::cerr << "exception " << e.what() << std::endl;
   }
 
+  try {
+    /*
+     * Function with MustIdentify passes and prints its location.
+     */
+    z = make_identifiable(d);
+    z(1, 'a');
+  } catch (const std::exception& e) {
+    std::cerr << "exception " << e.what() << std::endl;
+  }
   return 0;
 }
-#pragma mark until here
+
+
